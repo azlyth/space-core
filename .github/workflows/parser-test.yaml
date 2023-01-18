@@ -1,0 +1,13 @@
+name: Parser test
+
+on: push
+
+jobs:
+
+  python-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download `earthly` binary
+        run: "sudo /bin/sh -c 'wget https://github.com/earthly/earthly/releases/download/v0.6.30/earthly-linux-amd64 -O /usr/local/bin/earthly && chmod +x /usr/local/bin/earthly'"
+      - name: Test Python parsing
+        run: earthly github.com/azlyth/space-core:$GITHUB_REF_NAME+python-test
