@@ -4,6 +4,7 @@ import pdb
 import sys
 from dataclasses import dataclass
 from pprint import pprint
+from typing import Optional
 
 
 SOURCE_DIRECTORY = sys.argv[1]
@@ -44,12 +45,35 @@ class Attribute:
 
 
 @dataclass
-class Function:
-    ast: ast.FunctionDef
+class Class:
+    ast: ast.ClassDef
     path: str
 
     def name(self):
         return self.ast.name
+
+    def methods(self):
+        return [
+            Function(ast=n, path=self.path, parent=self)
+            for n in self.ast.body
+            if isinstance(n, ast.FunctionDef)
+        ]
+
+
+@dataclass
+class Function:
+    ast: ast.FunctionDef
+    path: str
+    parent: Optional[Class] = None
+
+    def short_name(self):
+        return self.ast.name
+
+    def full_name(self):
+        if self.parent:
+            return f"{self.parent.name()}.{self.short_name()}"
+        else:
+            return self.ast.name
 
     def calls(self):
         return [
@@ -78,22 +102,6 @@ class Call:
             return func.id
         elif isinstance(func, ast.Attribute):
             return Attribute(ast=func, path=self.path).short_name()
-
-
-@dataclass
-class Class:
-    ast: ast.ClassDef
-    path: str
-
-    def name(self):
-        return self.ast.name
-
-    def methods(self):
-        return [
-            Function(ast=n, path=self.path)
-            for n in self.ast.body
-            if isinstance(n, ast.FunctionDef)
-        ]
 
 
 @dataclass
@@ -146,39 +154,40 @@ class Codebase:
     def all_calls(self):
         return flatten(
             [flatten([m.calls() for m in c.methods()]) for c in self.all_classes()]
-        )
+        ) + flatten([f.calls() for f in self.all_functions()])
 
     def print_all(self):
         print(">> Class-less functions\n")
-        pprint([x.name() for x in self.all_functions()])
+        pprint([x.full_name() for x in self.all_functions()])
 
-        print("\n>> Classes, methods, and calls\n")
-        pprint(
-            [
-                (
-                    x.name(),
-                    [
-                        (x.name(), [c.full_name() for c in x.calls()])
-                        for x in x.methods()
-                    ],
-                )
-                for x in self.all_classes()
-            ]
-        )
+        print("\n>> Classes, methods, and calls")
+        for x in self.all_classes():
+            print(f"\nCLASS: {x.name()}")
+            pprint(
+                [
+                    (x.full_name(), [c.full_name() for c in x.calls()])
+                    for x in x.methods()
+                ]
+            )
 
 
 if __name__ == "__main__":
     cb = Codebase(sys.argv[1])
     cb.print_all()
 
-    relationships = {
-        f.name(): []
+    functions = {
+        f.short_name(): {"object": f, "callers": []}
         for f in cb.all_functions() + flatten([c.methods() for c in cb.all_classes()])
     }
 
     for call in cb.all_calls():
-        if call.short_name() in relationships:
-            relationships[call.short_name()].append(call.parent.name())
+        if call.short_name() in functions:
+            functions[call.short_name()]["callers"].append(call)
 
     print("\n>> List of methods and who calls them\n")
-    pprint(relationships)
+    for function_name, data in functions.items():
+        print(
+            data["object"].full_name(), [c.parent.full_name() for c in data["callers"]]
+        )
+
+    # pdb.set_trace()
