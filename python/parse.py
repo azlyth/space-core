@@ -3,35 +3,95 @@ import os
 import pdb
 import sys
 from dataclasses import dataclass
+from pprint import pprint
 
 
 SOURCE_DIRECTORY = sys.argv[1]
 
 
+def test_method():
+    return os.path.exists("/tmp")
+
+
+def flatten(_list):
+    return sum(_list, [])
+
+
+@dataclass
+class Attribute:
+    ast: ast.Attribute
+    path: str
+
+    def short_name(self):
+        child = self.ast.value
+        if isinstance(child, ast.Name):
+            if self.ast.attr:
+                return self.ast.attr
+            else:
+                return child.id
+        elif isinstance(child, ast.Attribute):
+            return self.ast.attr
+
+    def full_name(self):
+        child = self.ast.value
+        if isinstance(child, ast.Name):
+            if self.ast.attr:
+                return f"{child.id}.{self.ast.attr}"
+            else:
+                return child.id
+        elif isinstance(child, ast.Attribute):
+            return f"{Attribute(ast=child, path=self.path).full_name()}.{self.ast.attr}"
+
+
 @dataclass
 class Function:
-    ast_object: ast.FunctionDef
+    ast: ast.FunctionDef
     path: str
 
     def name(self):
-        return self.ast_object.name
+        return self.ast.name
 
     def calls(self):
-        return [n for n in ast.walk(self.ast_object) if isinstance(n, ast.Call)]
+        return [
+            Call(ast=n, path=self.path, parent=self)
+            for n in ast.walk(self.ast)
+            if isinstance(n, ast.Call)
+        ]
+
+
+@dataclass
+class Call:
+    parent: Function
+    ast: ast.Call
+    path: str
+
+    def full_name(self):
+        func = self.ast.func
+        if isinstance(func, ast.Name):
+            return func.id
+        elif isinstance(func, ast.Attribute):
+            return Attribute(ast=func, path=self.path).full_name()
+
+    def short_name(self):
+        func = self.ast.func
+        if isinstance(func, ast.Name):
+            return func.id
+        elif isinstance(func, ast.Attribute):
+            return Attribute(ast=func, path=self.path).short_name()
 
 
 @dataclass
 class Class:
-    ast_object: ast.ClassDef
+    ast: ast.ClassDef
     path: str
 
     def name(self):
-        return self.ast_object.name
+        return self.ast.name
 
     def methods(self):
         return [
-            Function(ast_object=n, path=self.path)
-            for n in self.ast_object.body
+            Function(ast=n, path=self.path)
+            for n in self.ast.body
             if isinstance(n, ast.FunctionDef)
         ]
 
@@ -41,22 +101,22 @@ class CodeFile:
     path: str
 
     @property
-    def ast_object(self):
+    def ast(self):
         with open(self.path) as file:
             node = ast.parse(file.read())
         return node
 
     def functions(self):
         return [
-            Function(ast_object=n, path=self.path)
-            for n in self.ast_object.body
+            Function(ast=n, path=self.path)
+            for n in self.ast.body
             if isinstance(n, ast.FunctionDef)
         ]
 
     def classes(self):
         return [
-            Class(ast_object=n, path=self.path)
-            for n in self.ast_object.body
+            Class(ast=n, path=self.path)
+            for n in self.ast.body
             if isinstance(n, ast.ClassDef)
         ]
 
@@ -78,13 +138,47 @@ class Codebase:
         return [CodeFile(p) for p in self.code_file_paths()]
 
     def all_classes(self):
-        return sum([pf.classes() for pf in cb.code_files()], [])
+        return flatten([pf.classes() for pf in self.code_files()])
 
     def all_functions(self):
-        return sum([pf.functions() for pf in cb.code_files()], [])
+        return flatten([pf.functions() for pf in self.code_files()])
+
+    def all_calls(self):
+        return flatten(
+            [flatten([m.calls() for m in c.methods()]) for c in self.all_classes()]
+        )
+
+    def print_all(self):
+        print(">> Class-less functions\n")
+        pprint([x.name() for x in self.all_functions()])
+
+        print("\n>> Classes, methods, and calls\n")
+        pprint(
+            [
+                (
+                    x.name(),
+                    [
+                        (x.name(), [c.full_name() for c in x.calls()])
+                        for x in x.methods()
+                    ],
+                )
+                for x in self.all_classes()
+            ]
+        )
 
 
 if __name__ == "__main__":
     cb = Codebase(sys.argv[1])
-    print([x.name() for x in cb.all_functions()])
-    print([x.name() for x in cb.all_classes()])
+    cb.print_all()
+
+    relationships = {
+        f.name(): []
+        for f in cb.all_functions() + flatten([c.methods() for c in cb.all_classes()])
+    }
+
+    for call in cb.all_calls():
+        if call.short_name() in relationships:
+            relationships[call.short_name()].append(call.parent.name())
+
+    print("\n>> List of methods and who calls them\n")
+    pprint(relationships)
